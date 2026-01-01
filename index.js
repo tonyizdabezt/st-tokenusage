@@ -21,6 +21,8 @@ const extensionName = 'token-usage-tracker';
 const defaultSettings = {
     showInTopBar: true,
     modelColors: {}, // { "gpt-4o": "#6366f1", "claude-3-opus": "#8b5cf6", ... }
+    // Prices per 1M tokens: { "gpt-4o": { in: 2.5, out: 10 }, ... }
+    modelPrices: {},
     // Accumulated usage data
     usage: {
         session: { input: 0, output: 0, total: 0, messageCount: 0, startTime: null },
@@ -57,6 +59,28 @@ function loadSettings() {
     if (!settings.usage.byMonth) settings.usage.byMonth = {};
     if (!settings.usage.byChat) settings.usage.byChat = {};
     if (!settings.usage.byModel) settings.usage.byModel = {};
+
+    // Initialize modelPrices
+    if (!settings.modelPrices) settings.modelPrices = {};
+
+    // Migration: Convert byDay.models from numeric format to object format
+    // Old: models[modelId] = totalTokens (number)
+    // New: models[modelId] = { input, output, total }
+    for (const dayData of Object.values(settings.usage.byDay)) {
+        if (dayData.models) {
+            for (const [modelId, value] of Object.entries(dayData.models)) {
+                if (typeof value === 'number') {
+                    // Migrate: estimate input/output using day's ratio
+                    const ratio = dayData.total ? value / dayData.total : 0;
+                    dayData.models[modelId] = {
+                        input: Math.round((dayData.input || 0) * ratio),
+                        output: Math.round((dayData.output || 0) * ratio),
+                        total: value
+                    };
+                }
+            }
+        }
+    }
 
     // Initialize session start time
     if (!settings.usage.session.startTime) {
@@ -208,10 +232,16 @@ function recordUsage(inputTokens, outputTokens, chatId = null, modelId = null) {
     if (!usage.byDay[dayKey]) usage.byDay[dayKey] = { input: 0, output: 0, total: 0, messageCount: 0, models: {} };
     addTokens(usage.byDay[dayKey]);
 
-    // Track model within day for stacked chart
+    // Track model within day for stacked chart (with input/output breakdown for cost calculation)
     if (modelId) {
         if (!usage.byDay[dayKey].models) usage.byDay[dayKey].models = {};
-        usage.byDay[dayKey].models[modelId] = (usage.byDay[dayKey].models[modelId] || 0) + totalTokens;
+        if (!usage.byDay[dayKey].models[modelId]) {
+            usage.byDay[dayKey].models[modelId] = { input: 0, output: 0, total: 0 };
+        }
+        const modelData = usage.byDay[dayKey].models[modelId];
+        modelData.input += inputTokens;
+        modelData.output += outputTokens;
+        modelData.total += totalTokens;
     }
 
     // By hour
@@ -809,6 +839,60 @@ function setModelColor(modelId, color) {
     saveSettings();
 }
 
+/**
+ * Get price settings for a model
+ * @param {string} modelId
+ * @returns {{in: number, out: number}} Price per 1M tokens
+ */
+function getModelPrice(modelId) {
+    const settings = getSettings();
+    return settings.modelPrices[modelId] || { in: 0, out: 0 };
+}
+
+/**
+ * Set price settings for a model
+ * @param {string} modelId
+ * @param {number} priceIn - Price per 1M input tokens
+ * @param {number} priceOut - Price per 1M output tokens
+ */
+function setModelPrice(modelId, priceIn, priceOut) {
+    const settings = getSettings();
+    settings.modelPrices[modelId] = {
+        in: parseFloat(priceIn) || 0,
+        out: parseFloat(priceOut) || 0
+    };
+    saveSettings();
+}
+
+/**
+ * Calculate cost for a given token usage and model
+ * @param {number} inputTokens
+ * @param {number} outputTokens
+ * @param {string} modelId
+ * @returns {number} Cost in dollars
+ */
+function calculateCost(inputTokens, outputTokens, modelId) {
+    const prices = getModelPrice(modelId);
+    if (!prices.in && !prices.out) return 0;
+
+    const inputCost = (inputTokens / 1000000) * prices.in;
+    const outputCost = (outputTokens / 1000000) * prices.out;
+    return inputCost + outputCost;
+}
+
+/**
+ * Calculate all-time cost using the byModel aggregation which has precise input/output counts
+ */
+function calculateAllTimeCost() {
+    const settings = getSettings();
+    const byModel = settings.usage.byModel;
+    let totalCost = 0;
+
+    for (const [modelId, data] of Object.entries(byModel)) {
+        totalCost += calculateCost(data.input, data.output, modelId);
+    }
+    return totalCost;
+}
 
 // Chart state
 let currentChartRange = 30;
@@ -820,7 +904,7 @@ const CHART_COLORS = {
     bar: 'var(--SmartThemeBorderColor)',
     text: 'var(--SmartThemeBodyColor)',
     grid: 'var(--SmartThemeBorderColor)',
-    cursor: 'var(--SmartThemeQuoteColor)'
+    cursor: 'var(--SmartThemeBodyColor)'
 };
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -998,11 +1082,14 @@ function renderChart() {
 
         // Draw filled segments for each model
         if (d.models && Object.keys(d.models).length > 0 && d.usage > 0) {
-            const modelEntries = Object.entries(d.models).sort((a, b) => b[1] - a[1]); // Sort by usage desc
+            // Extract total from new object format or use number directly for legacy
+            const getTokens = (v) => typeof v === 'number' ? v : (v.total || 0);
+            const modelEntries = Object.entries(d.models).sort((a, b) => getTokens(b[1]) - getTokens(a[1])); // Sort by usage desc
 
             let cumulativeY = barY + h; // Start from bottom
 
-            for (const [modelId, tokens] of modelEntries) {
+            for (const [modelId, modelData] of modelEntries) {
+                const tokens = getTokens(modelData);
                 const segmentHeight = (tokens / d.usage) * h;
                 const segmentY = cumulativeY - segmentHeight;
 
@@ -1076,10 +1163,13 @@ function showTooltip(d) {
     // Build model breakdown HTML
     let modelBreakdown = '';
     if (d.models && Object.keys(d.models).length > 0) {
-        const modelEntries = Object.entries(d.models).sort((a, b) => a[1] - b[1]); // Sort ascending (smallest first, like graph bottom-up)
+        // Extract total from new object format or use number directly for legacy
+        const getTokens = (v) => typeof v === 'number' ? v : (v.total || 0);
+        const modelEntries = Object.entries(d.models).sort((a, b) => getTokens(a[1]) - getTokens(b[1])); // Sort ascending (smallest first, like graph bottom-up)
         modelBreakdown = '<div style="margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.2);">';
         const displayEntries = modelEntries.slice(-8); // Show last 8 (the largest)
-        for (const [model, tokens] of displayEntries) {
+        for (const [model, modelData] of displayEntries) {
+            const tokens = getTokens(modelData);
             const percent = d.usage > 0 ? Math.round((tokens / d.usage) * 100) : 0;
             const shortName = model.length > 25 ? model.substring(0, 22) + '...' : model;
             const color = getModelColor(model);
@@ -1099,7 +1189,7 @@ function showTooltip(d) {
 
     tooltip.innerHTML = `
         <div style="font-weight: 600; margin-bottom: 2px; color: var(--SmartThemeBodyColor);">${d.fullDate}</div>
-        <div style="color: var(--SmartThemeQuoteColor);">${formatNumberFull(d.usage)} tokens</div>
+        <div style="color: var(--SmartThemeBodyColor);">${formatNumberFull(d.usage)} tokens</div>
         <div style="font-size: 10px; color: var(--SmartThemeBodyColor); opacity: 0.6;">${formatNumberFull(d.input)} in / ${formatNumberFull(d.output)} out</div>
         ${modelBreakdown}
     `;
@@ -1161,6 +1251,7 @@ function updateChartRange(range) {
  */
 function updateUIStats() {
     const stats = getUsageStats();
+    const now = new Date();
 
     // Today header
     $('#token-usage-today-total').text(formatTokens(stats.today.total));
@@ -1171,6 +1262,63 @@ function updateUIStats() {
     $('#token-usage-week-total').text(formatTokens(stats.thisWeek.total));
     $('#token-usage-month-total').text(formatTokens(stats.thisMonth.total));
     $('#token-usage-alltime-total').text(formatTokens(stats.allTime.total));
+
+    // Cost calculations
+    const allTimeCost = calculateAllTimeCost();
+
+    if (allTimeCost > 0) {
+        $('#token-usage-alltime-cost').text(`$${allTimeCost.toFixed(2)}`);
+    } else {
+        $('#token-usage-alltime-cost').text('$0.00');
+    }
+
+    // For Week/Month: We iterate all `byDay` keys and match those that belong to current week/month
+    const currentWeekKey = getWeekKey(now);
+    const currentMonthKey = getMonthKey(now);
+    const todayKey = getDayKey(now);
+
+    let weekCost = 0;
+    let monthCost = 0;
+    let todayCost = 0;
+
+    const settings = getSettings();
+    for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
+        // Parse dayKey (YYYY-MM-DD) as local date, not UTC
+        // new Date("2026-01-01") interprets as UTC, which shifts timezone
+        const [year, month, day] = dayKey.split('-').map(Number);
+        const date = new Date(year, month - 1, day);
+
+        // Week check
+        if (getWeekKey(date) === currentWeekKey) {
+            // Calculate cost for this day using per-model input/output breakdown
+            if (data.models) {
+                for (const [mid, modelData] of Object.entries(data.models)) {
+                    // modelData is now { input, output, total } (or number for legacy data)
+                    const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
+                    const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
+                    const cost = calculateCost(mInput, mOutput, mid);
+                    weekCost += cost;
+                    if (dayKey === todayKey) {
+                        todayCost += cost;
+                    }
+                }
+            }
+        }
+        // Month check
+        if (getMonthKey(date) === currentMonthKey) {
+             if (data.models) {
+                 for (const [mid, modelData] of Object.entries(data.models)) {
+                     const mInput = typeof modelData === 'number' ? 0 : (modelData.input || 0);
+                     const mOutput = typeof modelData === 'number' ? 0 : (modelData.output || 0);
+                     monthCost += calculateCost(mInput, mOutput, mid);
+                 }
+            }
+        }
+    }
+
+    $('#token-usage-week-cost').text(`$${weekCost.toFixed(2)}`);
+    $('#token-usage-month-cost').text(`$${monthCost.toFixed(2)}`);
+    $('#token-usage-today-cost').text(`$${todayCost.toFixed(2)}`);
 
     $('#token-usage-tokenizer').text('Tokenizer: ' + (stats.tokenizer || 'Unknown'));
 
@@ -1184,36 +1332,65 @@ function updateUIStats() {
 
 
 /**
- * Render the model colors grid
+ * Render the model colors grid with price inputs
  */
 function renderModelColorsGrid() {
     const grid = $('#token-usage-model-colors-grid');
     if (grid.length === 0) return;
 
-    grid.empty();
-
     const stats = getUsageStats();
     const models = Object.keys(stats.byModel || {}).sort();
 
     if (models.length === 0) {
-        grid.append('<div style="font-size: 10px; color: var(--SmartThemeBodyColor); opacity: 0.5; padding: 8px; grid-column: 1 / -1; text-align: center;">No models tracked yet</div>');
+        grid.empty().append('<div style="font-size: 10px; color: var(--SmartThemeBodyColor); opacity: 0.5; padding: 8px; text-align: center;">No models tracked yet</div>');
         return;
     }
 
+    // If grid is already populated with the same models, don't wipe it (prevents input focus loss)
+    const existingRows = grid.children('.model-config-row');
+    if (existingRows.length === models.length) {
+        // Assume same order check isn't needed for now, unlikely to change order rapidly
+        return;
+    }
+
+    grid.empty();
+
     for (const model of models) {
         const color = getModelColor(model);
+        const prices = getModelPrice(model);
 
         const row = $(`
-            <div style="display: flex; align-items: center; gap: 4px; min-width: 0;">
+            <div class="model-config-row" style="display: flex; align-items: center; gap: 4px; min-width: 0;">
                 <input type="color" value="${color}" data-model="${model}"
+                       class="model-color-picker"
                        style="width: 20px; height: 20px; padding: 0; border: none; cursor: pointer; flex-shrink: 0; border-radius: 4px;">
                 <span title="${model}" style="font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--SmartThemeBodyColor); flex: 1;">${model}</span>
+                <span style="font-size: 8px; color: var(--SmartThemeBodyColor); opacity: 0.5; flex-shrink: 0;">Price</span>
+                <input type="number" class="price-input-in" data-model="${model}" value="${prices.in || ''}" step="0.01" min="0" placeholder="In" title="Price per 1M input tokens" style="width: 28px; padding: 1px 2px; font-size: 8px; border-radius: 2px; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeInputColor); color: var(--SmartThemeBodyColor); flex-shrink: 0;">
+                <input type="number" class="price-input-out" data-model="${model}" value="${prices.out || ''}" step="0.01" min="0" placeholder="Out" title="Price per 1M output tokens" style="width: 28px; padding: 1px 2px; font-size: 8px; border-radius: 2px; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeInputColor); color: var(--SmartThemeBodyColor); flex-shrink: 0;">
             </div>
         `);
 
-        row.find('input[type="color"]').on('change', function() {
+        // Color picker handler
+        row.find('.model-color-picker').on('change', function() {
             setModelColor(String($(this).data('model')), String($(this).val()));
-            renderChart(); // Re-render with new colors
+            renderChart();
+        });
+
+        // Price input handlers with debounce
+        let debounceTimer;
+        const handlePriceChange = () => {
+             const mId = model; // closure
+             const pIn = row.find('.price-input-in').val();
+             const pOut = row.find('.price-input-out').val();
+             setModelPrice(mId, pIn, pOut);
+             // Trigger UI update to recalc costs
+             updateUIStats();
+        };
+
+        row.find('input[type="number"]').on('input', function() {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(handlePriceChange, 500);
         });
 
         grid.append(row);
@@ -1238,8 +1415,11 @@ function createSettingsUI() {
                     <!-- Chart Header: Today stats + Range selector -->
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <div>
-                            <span style="font-size: 18px; font-weight: 600; color: var(--SmartThemeQuoteColor);" id="token-usage-today-total">${formatTokens(stats.today.total)}</span>
-                            <span style="font-size: 11px; color: var(--SmartThemeBodyColor); opacity: 0.5;"> today</span>
+                            <div style="display: flex; align-items: baseline; gap: 6px;">
+                                <span style="font-size: 18px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-today-total">${formatTokens(stats.today.total)}</span>
+                                <span id="token-usage-today-cost" style="font-size: 12px; color: var(--SmartThemeBodyColor); opacity: 0.8;">$0.00</span>
+                                <span style="font-size: 11px; color: var(--SmartThemeBodyColor); opacity: 0.5;"> today</span>
+                            </div>
                             <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.4;">
                                 <span id="token-usage-today-in">${formatTokens(stats.today.input || 0)}</span> in /
                                 <span id="token-usage-today-out">${formatTokens(stats.today.output || 0)}</span> out
@@ -1257,30 +1437,42 @@ function createSettingsUI() {
 
                     <!-- Stats Grid (Week, Month, All Time) -->
                     <div class="token-usage-stats-grid" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px;">
-                        <div class="token-usage-stat-card" style="background: var(--SmartThemeInputColor); padding: 6px 8px; border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor);">
-                            <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5;">This Week</div>
-                            <div style="font-size: 16px; font-weight: 600; color: var(--SmartThemeBodyColor);">
-                                <span id="token-usage-week-total">${formatTokens(stats.thisWeek.total)}</span>
+                        <div class="token-usage-stat-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex;">
+                            <div style="flex: 1; padding: 4px 8px;">
+                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5;">This Week</div>
+                                <div style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-week-total">${formatTokens(stats.thisWeek.total)}</div>
+                            </div>
+                            <div style="width: 1px; background: var(--SmartThemeBorderColor);"></div>
+                            <div style="flex: 1; padding: 4px 8px; display: flex; align-items: center; justify-content: center;">
+                                <span style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-week-cost">$0.00</span>
                             </div>
                         </div>
-                        <div class="token-usage-stat-card" style="background: var(--SmartThemeInputColor); padding: 6px 8px; border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor);">
-                            <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5;">This Month</div>
-                            <div style="font-size: 16px; font-weight: 600; color: var(--SmartThemeBodyColor);">
-                                <span id="token-usage-month-total">${formatTokens(stats.thisMonth.total)}</span>
+                        <div class="token-usage-stat-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex;">
+                            <div style="flex: 1; padding: 4px 8px;">
+                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5;">This Month</div>
+                                <div style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-month-total">${formatTokens(stats.thisMonth.total)}</div>
+                            </div>
+                            <div style="width: 1px; background: var(--SmartThemeBorderColor);"></div>
+                            <div style="flex: 1; padding: 4px 8px; display: flex; align-items: center; justify-content: center;">
+                                <span style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-month-cost">$0.00</span>
                             </div>
                         </div>
-                        <div class="token-usage-stat-card" style="background: var(--SmartThemeInputColor); padding: 6px 8px; border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor);">
-                            <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5;">All Time</div>
-                            <div style="font-size: 16px; font-weight: 600; color: var(--SmartThemeQuoteColor);">
-                                <span id="token-usage-alltime-total">${formatTokens(stats.allTime.total)}</span>
+                        <div class="token-usage-stat-card" style="background: var(--SmartThemeInputColor); border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden; display: flex;">
+                            <div style="flex: 1; padding: 4px 8px;">
+                                <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.5;">All Time</div>
+                                <div style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-alltime-total">${formatTokens(stats.allTime.total)}</div>
+                            </div>
+                            <div style="width: 1px; background: var(--SmartThemeBorderColor);"></div>
+                            <div style="flex: 1; padding: 4px 8px; display: flex; align-items: center; justify-content: center;">
+                                <span style="font-size: 14px; font-weight: 600; color: var(--SmartThemeBodyColor);" id="token-usage-alltime-cost">$0.00</span>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Model Colors -->
+                    <!-- Config (Model Colors & Prices) -->
                     <div class="inline-drawer" style="margin-top: 10px;">
                         <div class="inline-drawer-toggle inline-drawer-header" style="padding: 4px 0 4px 8px;">
-                            <span style="font-size: 11px;">Model Colors</span>
+                            <span style="font-size: 11px;">Config</span>
                             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
                         </div>
                         <div class="inline-drawer-content">
