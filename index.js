@@ -959,6 +959,1286 @@ function calculateAllTimeCost() {
     return totalCost;
 }
 
+/**
+ * Get hourly chart data for the last N hours
+ * @param {number} hours - Number of hours to retrieve
+ */
+function getHourlyChartData(hours = 24) {
+    const stats = getUsageStats();
+    const byHour = stats.byHour || {};
+    const data = [];
+    const now = new Date();
+
+    for (let i = hours - 1; i >= 0; i--) {
+        const date = new Date(now);
+        date.setHours(date.getHours() - i);
+        const hourKey = getHourKey(date);
+        const hourData = byHour[hourKey] || { total: 0, input: 0, output: 0 };
+
+        data.push({
+            date: date,
+            hourKey: hourKey,
+            usage: hourData.total || 0,
+            input: hourData.input || 0,
+            output: hourData.output || 0,
+            displayTime: date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true }),
+            fullTime: date.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        });
+    }
+    return data;
+}
+
+/**
+ * Get monthly chart data for the last N months
+ * @param {number} months - Number of months to retrieve
+ */
+function getMonthlyChartData(months = 12) {
+    const stats = getUsageStats();
+    const byMonth = stats.byMonth || {};
+    const data = [];
+    const now = new Date();
+
+    for (let i = months - 1; i >= 0; i--) {
+        const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const monthKey = getMonthKey(date);
+        const monthData = byMonth[monthKey] || { total: 0, input: 0, output: 0, messageCount: 0 };
+
+        data.push({
+            date: date,
+            monthKey: monthKey,
+            usage: monthData.total || 0,
+            input: monthData.input || 0,
+            output: monthData.output || 0,
+            messageCount: monthData.messageCount || 0,
+            displayMonth: date.toLocaleDateString('en-US', { month: 'short' }),
+            fullMonth: date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        });
+    }
+    return data;
+}
+
+/**
+ * Get weekly chart data for the last N weeks
+ * @param {number} weeks - Number of weeks to retrieve
+ */
+function getWeeklyChartData(weeks = 12) {
+    const stats = getUsageStats();
+    const byDay = stats.byDay || {};
+    const data = [];
+    const now = new Date();
+
+    for (let i = weeks - 1; i >= 0; i--) {
+        // Get start of week (i weeks ago)
+        const weekStart = new Date(now);
+        weekStart.setDate(weekStart.getDate() - (weekStart.getDay() + i * 7));
+        weekStart.setHours(0, 0, 0, 0);
+
+        let weekTotal = 0, weekInput = 0, weekOutput = 0, weekMessages = 0;
+
+        // Sum all days in this week
+        for (let d = 0; d < 7; d++) {
+            const dayDate = new Date(weekStart);
+            dayDate.setDate(dayDate.getDate() + d);
+            const dayKey = getDayKey(dayDate);
+            const dayData = byDay[dayKey];
+            if (dayData) {
+                weekTotal += dayData.total || 0;
+                weekInput += dayData.input || 0;
+                weekOutput += dayData.output || 0;
+                weekMessages += dayData.messageCount || 0;
+            }
+        }
+
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+
+        data.push({
+            date: weekStart,
+            weekStart: weekStart,
+            weekEnd: weekEnd,
+            usage: weekTotal,
+            input: weekInput,
+            output: weekOutput,
+            messageCount: weekMessages,
+            displayWeek: `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+            fullWeek: `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+        });
+    }
+    return data;
+}
+
+/**
+ * Get input vs output comparison data (daily)
+ * @param {number} days - Number of days to retrieve
+ */
+function getInputOutputChartData(days = 30) {
+    const chartData = getChartData(days);
+    return chartData.map(d => ({
+        ...d,
+        displayDate: d.displayDate,
+        fullDate: d.fullDate
+    }));
+}
+
+/**
+ * Get cumulative usage data (daily)
+ * @param {number} days - Number of days to retrieve
+ */
+function getCumulativeChartData(days = 30) {
+    const chartData = getChartData(days);
+    let runningTotal = 0;
+    return chartData.map(d => {
+        runningTotal += d.usage;
+        return {
+            ...d,
+            cumulative: runningTotal,
+            displayDate: d.displayDate,
+            fullDate: d.fullDate
+        };
+    });
+}
+
+/**
+ * Get cost trend data (daily)
+ * @param {number} days - Number of days to retrieve
+ */
+function getCostChartData(days = 30) {
+    const stats = getUsageStats();
+    const byDay = stats.byDay || {};
+    const data = [];
+    const now = new Date();
+
+    for (let i = days - 1; i >= 0; i--) {
+        const date = new Date(now);
+        date.setDate(date.getDate() - i);
+        const dayKey = getDayKey(date);
+        const dayData = byDay[dayKey] || { total: 0, input: 0, output: 0, models: {} };
+
+        // Calculate cost for this day using model-specific prices
+        let dayCost = 0;
+        if (dayData.models) {
+            for (const [modelId, mData] of Object.entries(dayData.models)) {
+                const mInput = typeof mData === 'number' ? 0 : (mData.input || 0);
+                const mOutput = typeof mData === 'number' ? 0 : (mData.output || 0);
+                dayCost += calculateCost(mInput, mOutput, modelId);
+            }
+        }
+
+        data.push({
+            date: date,
+            dayKey: dayKey,
+            cost: dayCost,
+            input: dayData.input || 0,
+            output: dayData.output || 0,
+            usage: dayData.total || 0,
+            displayDate: date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+            fullDate: date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+        });
+    }
+    return data;
+}
+
+/**
+ * Get model breakdown data
+ */
+function getModelBreakdownData() {
+    const stats = getUsageStats();
+    const byModel = stats.byModel || {};
+    const data = [];
+
+    for (const [modelId, modelData] of Object.entries(byModel)) {
+        const cost = calculateCost(modelData.input, modelData.output, modelId);
+        data.push({
+            modelId,
+            input: modelData.input || 0,
+            output: modelData.output || 0,
+            total: modelData.total || 0,
+            messageCount: modelData.messageCount || 0,
+            cost,
+            color: getModelColor(modelId)
+        });
+    }
+
+    // Sort by total tokens descending
+    data.sort((a, b) => b.total - a.total);
+    return data;
+}
+
+/**
+ * Show the detailed stats popup
+ */
+async function showDetailedStatsPopup() {
+    const stats = getUsageStats();
+    const settings = getSettings();
+    const modelData = getModelBreakdownData();
+    const allTimeCost = calculateAllTimeCost();
+
+    // Calculate costs for different periods
+    const now = new Date();
+    const currentMonthKey = getMonthKey(now);
+    const currentWeekKey = getWeekKey(now);
+    const todayKey = getDayKey(now);
+
+    let monthCost = 0, weekCost = 0, todayCost = 0;
+    for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
+        const [year, month, day] = dayKey.split('-').map(Number);
+        const date = new Date(year, month - 1, day);
+
+        if (data.models) {
+            for (const [mid, mData] of Object.entries(data.models)) {
+                const mInput = typeof mData === 'number' ? 0 : (mData.input || 0);
+                const mOutput = typeof mData === 'number' ? 0 : (mData.output || 0);
+                const cost = calculateCost(mInput, mOutput, mid);
+
+                if (getMonthKey(date) === currentMonthKey) monthCost += cost;
+                if (getWeekKey(date) === currentWeekKey) weekCost += cost;
+                if (dayKey === todayKey) todayCost += cost;
+            }
+        }
+    }
+
+    // Build model breakdown table
+    let modelTableRows = '';
+    for (const model of modelData) {
+        const shortName = model.modelId.length > 30 ? model.modelId.substring(0, 27) + '...' : model.modelId;
+        modelTableRows += `
+            <tr>
+                <td style="display: flex; align-items: center; gap: 8px;">
+                    <span style="display: inline-block; width: 12px; height: 12px; background: ${model.color}; border-radius: 3px;"></span>
+                    <span title="${model.modelId}">${shortName}</span>
+                </td>
+                <td style="text-align: right;">${formatNumberFull(model.input)}</td>
+                <td style="text-align: right;">${formatNumberFull(model.output)}</td>
+                <td style="text-align: right; font-weight: 600;">${formatNumberFull(model.total)}</td>
+                <td style="text-align: right;">${model.messageCount}</td>
+                <td style="text-align: right; color: ${model.cost > 0 ? 'var(--SmartThemeQuoteColor)' : 'inherit'};">$${model.cost.toFixed(4)}</td>
+            </tr>
+        `;
+    }
+
+    const popupContent = `
+        <div style="min-width: 600px; max-width: 900px;">
+            <h3 style="margin: 0 0 16px 0; display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-chart-line"></i> Token Usage Statistics
+            </h3>
+
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;">
+                <div style="background: var(--SmartThemeBlurTintColor); padding: 12px; border-radius: 8px; border: 1px solid var(--SmartThemeBorderColor);">
+                    <div style="font-size: 11px; opacity: 0.6; margin-bottom: 4px;">Today</div>
+                    <div style="font-size: 20px; font-weight: 600;">${formatTokens(stats.today.total)}</div>
+                    <div style="font-size: 11px; opacity: 0.7;">$${todayCost.toFixed(2)}</div>
+                </div>
+                <div style="background: var(--SmartThemeBlurTintColor); padding: 12px; border-radius: 8px; border: 1px solid var(--SmartThemeBorderColor);">
+                    <div style="font-size: 11px; opacity: 0.6; margin-bottom: 4px;">This Week</div>
+                    <div style="font-size: 20px; font-weight: 600;">${formatTokens(stats.thisWeek.total)}</div>
+                    <div style="font-size: 11px; opacity: 0.7;">$${weekCost.toFixed(2)}</div>
+                </div>
+                <div style="background: var(--SmartThemeBlurTintColor); padding: 12px; border-radius: 8px; border: 1px solid var(--SmartThemeBorderColor);">
+                    <div style="font-size: 11px; opacity: 0.6; margin-bottom: 4px;">This Month</div>
+                    <div style="font-size: 20px; font-weight: 600;">${formatTokens(stats.thisMonth.total)}</div>
+                    <div style="font-size: 11px; opacity: 0.7;">$${monthCost.toFixed(2)}</div>
+                </div>
+                <div style="background: var(--SmartThemeBlurTintColor); padding: 12px; border-radius: 8px; border: 1px solid var(--SmartThemeBorderColor);">
+                    <div style="font-size: 11px; opacity: 0.6; margin-bottom: 4px;">All Time</div>
+                    <div style="font-size: 20px; font-weight: 600;">${formatTokens(stats.allTime.total)}</div>
+                    <div style="font-size: 11px; opacity: 0.7;">$${allTimeCost.toFixed(2)}</div>
+                </div>
+            </div>
+
+            <div style="margin-bottom: 12px;">
+                <div style="display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap;">
+                    <button class="menu_button popup-chart-tab active" data-view="daily" style="padding: 6px 12px; font-size: 12px;">
+                        <i class="fa-solid fa-calendar-day"></i> Daily
+                    </button>
+                    <button class="menu_button popup-chart-tab" data-view="weekly" style="padding: 6px 12px; font-size: 12px;">
+                        <i class="fa-solid fa-calendar-week"></i> Weekly
+                    </button>
+                    <button class="menu_button popup-chart-tab" data-view="monthly" style="padding: 6px 12px; font-size: 12px;">
+                        <i class="fa-solid fa-calendar"></i> Monthly
+                    </button>
+                    <button class="menu_button popup-chart-tab" data-view="hourly" style="padding: 6px 12px; font-size: 12px;">
+                        <i class="fa-solid fa-clock"></i> Hourly
+                    </button>
+                    <button class="menu_button popup-chart-tab" data-view="inout" style="padding: 6px 12px; font-size: 12px;">
+                        <i class="fa-solid fa-arrows-left-right"></i> Input vs Output
+                    </button>
+                    <button class="menu_button popup-chart-tab" data-view="cumulative" style="padding: 6px 12px; font-size: 12px;">
+                        <i class="fa-solid fa-chart-line"></i> Cumulative
+                    </button>
+                    <button class="menu_button popup-chart-tab" data-view="models" style="padding: 6px 12px; font-size: 12px;">
+                        <i class="fa-solid fa-robot"></i> By Model
+                    </button>
+                    <button class="menu_button popup-chart-tab" data-view="cost" style="padding: 6px 12px; font-size: 12px;">
+                        <i class="fa-solid fa-dollar-sign"></i> Cost Trend
+                    </button>
+                </div>
+                <div id="popup-chart-container" style="width: 100%; height: 250px; background: var(--SmartThemeBlurTintColor); border-radius: 8px; border: 1px solid var(--SmartThemeBorderColor); overflow: hidden;"></div>
+            </div>
+
+            <div style="margin-top: 20px;">
+                <h4 style="margin: 0 0 12px 0; font-size: 14px;">
+                    <i class="fa-solid fa-table"></i> Model Breakdown
+                </h4>
+                <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--SmartThemeBorderColor); border-radius: 8px;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                        <thead style="position: sticky; top: 0; background: var(--SmartThemeBlurTintColor);">
+                            <tr style="border-bottom: 1px solid var(--SmartThemeBorderColor);">
+                                <th style="padding: 8px; text-align: left;">Model</th>
+                                <th style="padding: 8px; text-align: right;">Input</th>
+                                <th style="padding: 8px; text-align: right;">Output</th>
+                                <th style="padding: 8px; text-align: right;">Total</th>
+                                <th style="padding: 8px; text-align: right;">Messages</th>
+                                <th style="padding: 8px; text-align: right;">Cost</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${modelTableRows || '<tr><td colspan="6" style="padding: 16px; text-align: center; opacity: 0.5;">No model data yet</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div style="margin-top: 16px; padding: 12px; background: var(--SmartThemeBlurTintColor); border-radius: 8px; border: 1px solid var(--SmartThemeBorderColor);">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-size: 11px; opacity: 0.6;">Total Messages</div>
+                        <div style="font-size: 14px; font-weight: 600;">${formatNumberFull(stats.allTime.messageCount)} messages</div>
+                        <div style="font-size: 10px; opacity: 0.5;">Average: ${stats.allTime.messageCount > 0 ? formatNumberFull(Math.round(stats.allTime.total / stats.allTime.messageCount)) : 0} tokens/message</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 11px; opacity: 0.6;">Tokenizer</div>
+                        <div style="font-size: 12px;">${stats.tokenizer || 'Unknown'}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const popup = new Popup(popupContent, POPUP_TYPE.TEXT, '', {
+        okButton: 'Close',
+        wide: true,
+        allowVerticalScrolling: true,
+        onOpen: () => {
+            initPopupCharts();
+        }
+    });
+
+    await popup.show();
+}
+
+/**
+ * Initialize charts in the popup
+ */
+function initPopupCharts() {
+    const container = document.getElementById('popup-chart-container');
+    if (!container) return;
+
+    // Render default view (daily)
+    renderPopupChart('daily');
+
+    // Tab click handlers
+    document.querySelectorAll('.popup-chart-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.popup-chart-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            const view = tab.getAttribute('data-view');
+            renderPopupChart(view);
+        });
+    });
+}
+
+/**
+ * Render chart in popup based on view type
+ * @param {string} view - 'daily', 'weekly', 'hourly', 'monthly', 'models', 'inout', 'cumulative', 'cost'
+ */
+function renderPopupChart(view) {
+    const container = document.getElementById('popup-chart-container');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    switch (view) {
+        case 'daily':
+            renderBarChartInContainer(container, getChartData(30), 'displayDate', 'fullDate');
+            break;
+        case 'weekly':
+            renderBarChartInContainer(container, getWeeklyChartData(12), 'displayWeek', 'fullWeek');
+            break;
+        case 'hourly':
+            renderBarChartInContainer(container, getHourlyChartData(24), 'displayTime', 'fullTime');
+            break;
+        case 'monthly':
+            renderBarChartInContainer(container, getMonthlyChartData(12), 'displayMonth', 'fullMonth');
+            break;
+        case 'models':
+            renderModelPieChart(container);
+            break;
+        case 'inout':
+            renderInputOutputChart(container, getInputOutputChartData(30));
+            break;
+        case 'cumulative':
+            renderCumulativeChart(container, getCumulativeChartData(30));
+            break;
+        case 'cost':
+            renderCostChart(container, getCostChartData(30));
+            break;
+    }
+}
+
+/**
+ * Render a bar chart in a specific container
+ */
+function renderBarChartInContainer(container, data, labelKey, tooltipKey) {
+    const rect = container.getBoundingClientRect();
+    const width = rect.width || 400;
+    const height = rect.height || 200;
+
+    if (data.length === 0) {
+        container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--SmartThemeBodyColor); opacity: 0.5;">No data available</div>';
+        return;
+    }
+
+    const margin = { top: 15, right: 15, bottom: 30, left: 50 };
+    const chartWidth = width - margin.left - margin.right;
+    const chartHeight = height - margin.top - margin.bottom;
+
+    const svg = createSVGElement('svg', {
+        width: width,
+        height: height,
+        viewBox: `0 0 ${width} ${height}`,
+        style: 'display: block;'
+    });
+
+    const maxUsage = Math.max(...data.map(d => d.usage), 1);
+    const niceMax = Math.ceil(maxUsage * 1.1 / 1000) * 1000 || 1000;
+    const yScale = (val) => chartHeight - (val / niceMax) * chartHeight;
+
+    // Grid lines
+    const gridGroup = createSVGElement('g');
+    for (let i = 0; i <= 4; i++) {
+        const val = (niceMax / 4) * i;
+        const y = margin.top + yScale(val);
+        const line = createSVGElement('line', {
+            x1: margin.left, y1: y, x2: width - margin.right, y2: y,
+            stroke: 'var(--SmartThemeBorderColor)', 'stroke-width': '1', 'stroke-dasharray': '4 4'
+        });
+        gridGroup.appendChild(line);
+
+        const text = createSVGElement('text', {
+            x: margin.left - 8, y: y + 4, 'text-anchor': 'end',
+            fill: 'var(--SmartThemeBodyColor)', 'font-size': '10', opacity: '0.7'
+        });
+        text.textContent = formatTokens(val);
+        gridGroup.appendChild(text);
+    }
+    svg.appendChild(gridGroup);
+
+    // Bars
+    const barGroup = createSVGElement('g');
+    const totalBarWidth = chartWidth / data.length;
+    const barWidth = Math.min(totalBarWidth * 0.7, 30);
+    const labelInterval = data.length > 20 ? Math.ceil(data.length / 10) : 1;
+
+    data.forEach((d, i) => {
+        const slotX = margin.left + (i * totalBarWidth);
+        const barX = slotX + (totalBarWidth - barWidth) / 2;
+        const barH = (d.usage / niceMax) * chartHeight;
+        const barY = margin.top + (chartHeight - barH);
+
+        // Bar
+        const bar = createSVGElement('rect', {
+            x: barX, y: barY, width: barWidth, height: Math.max(barH, 1),
+            fill: 'var(--SmartThemeQuoteColor)', rx: '3', ry: '3',
+            style: 'cursor: pointer;'
+        });
+
+        // Hover effect
+        bar.addEventListener('mouseenter', () => {
+            bar.setAttribute('opacity', '0.8');
+        });
+        bar.addEventListener('mouseleave', () => {
+            bar.setAttribute('opacity', '1');
+        });
+
+        barGroup.appendChild(bar);
+
+        // X labels
+        if (i % labelInterval === 0) {
+            const label = createSVGElement('text', {
+                x: barX + barWidth / 2, y: height - 8, 'text-anchor': 'middle',
+                fill: 'var(--SmartThemeBodyColor)', 'font-size': '10', opacity: '0.6'
+            });
+            label.textContent = d[labelKey];
+            barGroup.appendChild(label);
+        }
+    });
+    svg.appendChild(barGroup);
+
+    container.appendChild(svg);
+}
+
+/**
+ * Render a pie/donut chart for model breakdown
+ */
+function renderModelPieChart(container) {
+    const data = getModelBreakdownData();
+    const rect = container.getBoundingClientRect();
+    const width = rect.width || 400;
+    const height = rect.height || 200;
+
+    if (data.length === 0) {
+        container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--SmartThemeBodyColor); opacity: 0.5;">No model data yet</div>';
+        return;
+    }
+
+    const total = data.reduce((sum, d) => sum + d.total, 0);
+    const centerX = width / 3;
+    const centerY = height / 2;
+    const radius = Math.min(centerX, centerY) - 20;
+    const innerRadius = radius * 0.5;
+
+    const svg = createSVGElement('svg', {
+        width: width, height: height, viewBox: `0 0 ${width} ${height}`, style: 'display: block;'
+    });
+
+    let currentAngle = -Math.PI / 2;
+    const arcGroup = createSVGElement('g');
+
+    data.forEach((d) => {
+        const sliceAngle = (d.total / total) * 2 * Math.PI;
+        const endAngle = currentAngle + sliceAngle;
+
+        const x1 = centerX + radius * Math.cos(currentAngle);
+        const y1 = centerY + radius * Math.sin(currentAngle);
+        const x2 = centerX + radius * Math.cos(endAngle);
+        const y2 = centerY + radius * Math.sin(endAngle);
+        const ix1 = centerX + innerRadius * Math.cos(currentAngle);
+        const iy1 = centerY + innerRadius * Math.sin(currentAngle);
+        const ix2 = centerX + innerRadius * Math.cos(endAngle);
+        const iy2 = centerY + innerRadius * Math.sin(endAngle);
+
+        const largeArc = sliceAngle > Math.PI ? 1 : 0;
+
+        const pathD = `M ${ix1} ${iy1} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${ix1} ${iy1} Z`;
+
+        const path = createSVGElement('path', {
+            d: pathD, fill: d.color, stroke: 'var(--SmartThemeBodyColor)', 'stroke-width': '1',
+            style: 'cursor: pointer;'
+        });
+        path.addEventListener('mouseenter', () => path.setAttribute('opacity', '0.8'));
+        path.addEventListener('mouseleave', () => path.setAttribute('opacity', '1'));
+        arcGroup.appendChild(path);
+
+        currentAngle = endAngle;
+    });
+    svg.appendChild(arcGroup);
+
+    // Center text
+    const centerText = createSVGElement('text', {
+        x: centerX, y: centerY - 5, 'text-anchor': 'middle',
+        fill: 'var(--SmartThemeBodyColor)', 'font-size': '14', 'font-weight': '600'
+    });
+    centerText.textContent = formatTokens(total);
+    svg.appendChild(centerText);
+
+    const centerLabel = createSVGElement('text', {
+        x: centerX, y: centerY + 12, 'text-anchor': 'middle',
+        fill: 'var(--SmartThemeBodyColor)', 'font-size': '10', opacity: '0.6'
+    });
+    centerLabel.textContent = 'total tokens';
+    svg.appendChild(centerLabel);
+
+    // Legend
+    const legendX = width / 2 + 20;
+    let legendY = 20;
+    const maxLegendItems = Math.floor((height - 40) / 22);
+    const displayData = data.slice(0, maxLegendItems);
+
+    displayData.forEach((d) => {
+        const percent = ((d.total / total) * 100).toFixed(1);
+        const shortName = d.modelId.length > 20 ? d.modelId.substring(0, 17) + '...' : d.modelId;
+
+        const rect = createSVGElement('rect', {
+            x: legendX, y: legendY, width: 12, height: 12, fill: d.color, rx: '2'
+        });
+        svg.appendChild(rect);
+
+        const text = createSVGElement('text', {
+            x: legendX + 18, y: legendY + 10,
+            fill: 'var(--SmartThemeBodyColor)', 'font-size': '11'
+        });
+        text.textContent = `${shortName} (${percent}%)`;
+        svg.appendChild(text);
+
+        legendY += 22;
+    });
+
+    if (data.length > maxLegendItems) {
+        const moreText = createSVGElement('text', {
+            x: legendX, y: legendY + 10,
+            fill: 'var(--SmartThemeBodyColor)', 'font-size': '10', opacity: '0.5'
+        });
+        moreText.textContent = `+${data.length - maxLegendItems} more`;
+        svg.appendChild(moreText);
+    }
+
+    container.appendChild(svg);
+}
+
+/**
+ * Render Input vs Output stacked bar chart
+ */
+function renderInputOutputChart(container, data) {
+    const rect = container.getBoundingClientRect();
+    const width = rect.width || 400;
+    const height = rect.height || 200;
+
+    if (data.length === 0) {
+        container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--SmartThemeBodyColor); opacity: 0.5;">No data available</div>';
+        return;
+    }
+
+    const padding = { top: 20, right: 20, bottom: 35, left: 50 };
+    const chartWidth = width - padding.left - padding.right;
+    const chartHeight = height - padding.top - padding.bottom;
+    const maxValue = Math.max(...data.map(d => d.input + d.output), 1);
+
+    const svg = createSVGElement('svg', {
+        width: width, height: height, viewBox: `0 0 ${width} ${height}`, style: 'display: block;'
+    });
+
+    const barWidth = Math.max(3, (chartWidth / data.length) - 2);
+    const barGroup = createSVGElement('g');
+
+    // Y-axis gridlines
+    const gridLinesGroup = createSVGElement('g');
+    for (let i = 0; i <= 4; i++) {
+        const y = padding.top + (chartHeight * (1 - i / 4));
+        const line = createSVGElement('line', {
+            x1: padding.left, y1: y, x2: width - padding.right, y2: y,
+            stroke: 'var(--SmartThemeBorderColor)', 'stroke-opacity': '0.3'
+        });
+        gridLinesGroup.appendChild(line);
+
+        const label = createSVGElement('text', {
+            x: padding.left - 5, y: y + 3, 'text-anchor': 'end',
+            fill: 'var(--SmartThemeBodyColor)', 'font-size': '9', opacity: '0.5'
+        });
+        label.textContent = formatTokens(Math.round(maxValue * i / 4));
+        gridLinesGroup.appendChild(label);
+    }
+    svg.appendChild(gridLinesGroup);
+
+    // Stacked bars
+    data.forEach((d, i) => {
+        const x = padding.left + (i / data.length) * chartWidth;
+        const inputHeight = (d.input / maxValue) * chartHeight;
+        const outputHeight = (d.output / maxValue) * chartHeight;
+
+        // Input bar (bottom)
+        const inputBar = createSVGElement('rect', {
+            x: x, y: padding.top + chartHeight - inputHeight - outputHeight,
+            width: barWidth, height: inputHeight,
+            fill: '#6366f1', rx: '1'
+        });
+        inputBar.addEventListener('mouseenter', () => {
+            // @ts-ignore
+            inputBar.setAttribute('opacity', '0.8');
+        });
+        inputBar.addEventListener('mouseleave', () => {
+            // @ts-ignore
+            inputBar.setAttribute('opacity', '1');
+        });
+        barGroup.appendChild(inputBar);
+
+        // Output bar (top, stacked)
+        const outputBar = createSVGElement('rect', {
+            x: x, y: padding.top + chartHeight - outputHeight,
+            width: barWidth, height: outputHeight,
+            fill: '#f59e0b', rx: '1'
+        });
+        outputBar.addEventListener('mouseenter', () => {
+            // @ts-ignore
+            outputBar.setAttribute('opacity', '0.8');
+        });
+        outputBar.addEventListener('mouseleave', () => {
+            // @ts-ignore
+            outputBar.setAttribute('opacity', '1');
+        });
+        barGroup.appendChild(outputBar);
+    });
+    svg.appendChild(barGroup);
+
+    // Legend
+    const legendGroup = createSVGElement('g');
+    const legendInputRect = createSVGElement('rect', { x: padding.left, y: 5, width: 12, height: 12, fill: '#6366f1', rx: '2' });
+    const legendInputText = createSVGElement('text', { x: padding.left + 16, y: 14, fill: 'var(--SmartThemeBodyColor)', 'font-size': '10' });
+    legendInputText.textContent = 'Input';
+    const legendOutputRect = createSVGElement('rect', { x: padding.left + 55, y: 5, width: 12, height: 12, fill: '#f59e0b', rx: '2' });
+    const legendOutputText = createSVGElement('text', { x: padding.left + 71, y: 14, fill: 'var(--SmartThemeBodyColor)', 'font-size': '10' });
+    legendOutputText.textContent = 'Output';
+    legendGroup.appendChild(legendInputRect);
+    legendGroup.appendChild(legendInputText);
+    legendGroup.appendChild(legendOutputRect);
+    legendGroup.appendChild(legendOutputText);
+    svg.appendChild(legendGroup);
+
+    container.appendChild(svg);
+}
+
+/**
+ * Render cumulative line chart
+ */
+function renderCumulativeChart(container, data) {
+    const rect = container.getBoundingClientRect();
+    const width = rect.width || 400;
+    const height = rect.height || 200;
+
+    if (data.length === 0) {
+        container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--SmartThemeBodyColor); opacity: 0.5;">No data available</div>';
+        return;
+    }
+
+    const padding = { top: 20, right: 20, bottom: 35, left: 60 };
+    const chartWidth = width - padding.left - padding.right;
+    const chartHeight = height - padding.top - padding.bottom;
+    const maxValue = Math.max(...data.map(d => d.cumulative), 1);
+
+    const svg = createSVGElement('svg', {
+        width: width, height: height, viewBox: `0 0 ${width} ${height}`, style: 'display: block;'
+    });
+
+    // Y-axis gridlines
+    const gridLinesGroup = createSVGElement('g');
+    for (let i = 0; i <= 4; i++) {
+        const y = padding.top + (chartHeight * (1 - i / 4));
+        const line = createSVGElement('line', {
+            x1: padding.left, y1: y, x2: width - padding.right, y2: y,
+            stroke: 'var(--SmartThemeBorderColor)', 'stroke-opacity': '0.3'
+        });
+        gridLinesGroup.appendChild(line);
+
+        const label = createSVGElement('text', {
+            x: padding.left - 5, y: y + 3, 'text-anchor': 'end',
+            fill: 'var(--SmartThemeBodyColor)', 'font-size': '9', opacity: '0.5'
+        });
+        label.textContent = formatTokens(Math.round(maxValue * i / 4));
+        gridLinesGroup.appendChild(label);
+    }
+    svg.appendChild(gridLinesGroup);
+
+    // Build the line path
+    let pathD = '';
+    let areaD = '';
+    data.forEach((d, i) => {
+        const x = padding.left + (i / (data.length - 1 || 1)) * chartWidth;
+        const y = padding.top + chartHeight - (d.cumulative / maxValue) * chartHeight;
+        if (i === 0) {
+            pathD = `M ${x} ${y}`;
+            areaD = `M ${x} ${padding.top + chartHeight} L ${x} ${y}`;
+        } else {
+            pathD += ` L ${x} ${y}`;
+            areaD += ` L ${x} ${y}`;
+        }
+    });
+    areaD += ` L ${padding.left + chartWidth} ${padding.top + chartHeight} Z`;
+
+    // Area fill
+    const areaPath = createSVGElement('path', {
+        d: areaD, fill: 'var(--SmartThemeQuoteColor)', 'fill-opacity': '0.2'
+    });
+    svg.appendChild(areaPath);
+
+    // Line
+    const linePath = createSVGElement('path', {
+        d: pathD, fill: 'none', stroke: 'var(--SmartThemeQuoteColor)', 'stroke-width': '2'
+    });
+    svg.appendChild(linePath);
+
+    // Dots
+    const dotsGroup = createSVGElement('g');
+    data.forEach((d, i) => {
+        const x = padding.left + (i / (data.length - 1 || 1)) * chartWidth;
+        const y = padding.top + chartHeight - (d.cumulative / maxValue) * chartHeight;
+
+        const dot = createSVGElement('circle', {
+            cx: x, cy: y, r: 3,
+            fill: 'var(--SmartThemeQuoteColor)', stroke: 'var(--SmartThemeBodyColor)', 'stroke-width': '1'
+        });
+        dotsGroup.appendChild(dot);
+    });
+    svg.appendChild(dotsGroup);
+
+    // Total label at top
+    const totalLabel = createSVGElement('text', {
+        x: width - padding.right, y: padding.top - 5, 'text-anchor': 'end',
+        fill: 'var(--SmartThemeBodyColor)', 'font-size': '11', 'font-weight': '600'
+    });
+    totalLabel.textContent = `Total: ${formatTokens(data.length > 0 ? data[data.length - 1].cumulative : 0)}`;
+    svg.appendChild(totalLabel);
+
+    container.appendChild(svg);
+}
+
+/**
+ * Render cost trend chart
+ */
+function renderCostChart(container, data) {
+    const rect = container.getBoundingClientRect();
+    const width = rect.width || 400;
+    const height = rect.height || 200;
+
+    if (data.length === 0) {
+        container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--SmartThemeBodyColor); opacity: 0.5;">No data available</div>';
+        return;
+    }
+
+    const padding = { top: 20, right: 20, bottom: 35, left: 50 };
+    const chartWidth = width - padding.left - padding.right;
+    const chartHeight = height - padding.top - padding.bottom;
+    const maxCost = Math.max(...data.map(d => d.cost), 0.01);
+
+    const svg = createSVGElement('svg', {
+        width: width, height: height, viewBox: `0 0 ${width} ${height}`, style: 'display: block;'
+    });
+
+    // Y-axis gridlines
+    const gridLinesGroup = createSVGElement('g');
+    for (let i = 0; i <= 4; i++) {
+        const y = padding.top + (chartHeight * (1 - i / 4));
+        const line = createSVGElement('line', {
+            x1: padding.left, y1: y, x2: width - padding.right, y2: y,
+            stroke: 'var(--SmartThemeBorderColor)', 'stroke-opacity': '0.3'
+        });
+        gridLinesGroup.appendChild(line);
+
+        const label = createSVGElement('text', {
+            x: padding.left - 5, y: y + 3, 'text-anchor': 'end',
+            fill: 'var(--SmartThemeBodyColor)', 'font-size': '9', opacity: '0.5'
+        });
+        label.textContent = '$' + (maxCost * i / 4).toFixed(2);
+        gridLinesGroup.appendChild(label);
+    }
+    svg.appendChild(gridLinesGroup);
+
+    // Bars
+    const barWidth = Math.max(3, (chartWidth / data.length) - 2);
+    const barGroup = createSVGElement('g');
+
+    data.forEach((d, i) => {
+        const x = padding.left + (i / data.length) * chartWidth;
+        const barHeight = Math.max(0, (d.cost / maxCost) * chartHeight);
+        const y = padding.top + chartHeight - barHeight;
+
+        const bar = createSVGElement('rect', {
+            x: x, y: y, width: barWidth, height: barHeight,
+            fill: '#10b981', rx: '2'
+        });
+        bar.addEventListener('mouseenter', () => {
+            // @ts-ignore
+            bar.setAttribute('opacity', '0.8');
+        });
+        bar.addEventListener('mouseleave', () => {
+            // @ts-ignore
+            bar.setAttribute('opacity', '1');
+        });
+        barGroup.appendChild(bar);
+    });
+    svg.appendChild(barGroup);
+
+    // Total cost label
+    const totalCost = data.reduce((sum, d) => sum + d.cost, 0);
+    const totalLabel = createSVGElement('text', {
+        x: width - padding.right, y: padding.top - 5, 'text-anchor': 'end',
+        fill: 'var(--SmartThemeBodyColor)', 'font-size': '11', 'font-weight': '600'
+    });
+    totalLabel.textContent = `30-day total: $${totalCost.toFixed(2)}`;
+    svg.appendChild(totalLabel);
+
+    container.appendChild(svg);
+}
+
+/**
+ * Show the settings/configuration popup
+ */
+async function showSettingsPopup() {
+    const settings = getSettings();
+
+    const popupContent = `
+        <div style="min-width: 450px;">
+            <h3 style="margin: 0 0 16px 0; display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-gear"></i> Token Usage Tracker Settings
+            </h3>
+
+            <div style="margin-bottom: 16px;">
+                <h4 style="margin: 0 0 8px 0; font-size: 13px; opacity: 0.8;">Display</h4>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label class="checkbox_label">
+                        <input type="checkbox" id="tut-compact-mode" ${settings.compactMode ? 'checked' : ''}>
+                        <span>Compact mode (smaller UI)</span>
+                    </label>
+                    <label class="checkbox_label">
+                        <input type="checkbox" id="tut-show-costs" ${settings.showCostEstimates ? 'checked' : ''}>
+                        <span>Show cost estimates</span>
+                    </label>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 12px;">Default chart range:</span>
+                        <select id="tut-default-range" class="text_pole" style="width: auto; padding: 4px 8px;">
+                            <option value="7" ${settings.defaultChartRange === 7 ? 'selected' : ''}>7 days</option>
+                            <option value="30" ${settings.defaultChartRange === 30 ? 'selected' : ''}>30 days</option>
+                            <option value="90" ${settings.defaultChartRange === 90 ? 'selected' : ''}>90 days</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 12px;">Chart height:</span>
+                        <input type="number" id="tut-chart-height" class="text_pole" value="${settings.chartHeight}" min="150" max="600" step="10" style="width: 80px; padding: 4px 8px;">
+                        <span style="font-size: 11px; opacity: 0.5;">px</span>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-bottom: 16px;">
+                <h4 style="margin: 0 0 8px 0; font-size: 13px; opacity: 0.8;">Tracking</h4>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label class="checkbox_label">
+                        <input type="checkbox" id="tut-hourly-tracking" ${settings.enableHourlyTracking ? 'checked' : ''}>
+                        <span>Enable hourly tracking</span>
+                    </label>
+                    <label class="checkbox_label">
+                        <input type="checkbox" id="tut-chat-tracking" ${settings.enableChatTracking ? 'checked' : ''}>
+                        <span>Enable per-chat tracking</span>
+                    </label>
+                </div>
+            </div>
+
+            <div style="margin-bottom: 16px;">
+                <h4 style="margin: 0 0 8px 0; font-size: 13px; opacity: 0.8;">Alerts & Budget</h4>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 12px;">Daily token warning:</span>
+                        <input type="number" id="tut-warning-threshold" class="text_pole" value="${settings.warningThreshold || ''}" min="0" step="1000" placeholder="0 = disabled" style="width: 120px; padding: 4px 8px;">
+                        <span style="font-size: 11px; opacity: 0.5;">tokens</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 12px;">Monthly budget limit:</span>
+                        <input type="number" id="tut-budget-limit" class="text_pole" value="${settings.budgetLimit || ''}" min="0" step="1" placeholder="0 = disabled" style="width: 120px; padding: 4px 8px;">
+                        <span style="font-size: 11px; opacity: 0.5;">$ USD</span>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-bottom: 16px;">
+                <h4 style="margin: 0 0 8px 0; font-size: 13px; opacity: 0.8;">Model Pricing (per 1M tokens)</h4>
+                <div id="tut-model-pricing" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--SmartThemeBorderColor); border-radius: 8px; padding: 8px;">
+                    ${renderModelPricingList()}
+                </div>
+            </div>
+
+            <div style="margin-bottom: 8px;">
+                <h4 style="margin: 0 0 8px 0; font-size: 13px; opacity: 0.8;">Data Management</h4>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button class="menu_button" id="tut-reset-all" style="padding: 6px 12px; color: var(--warning-color);">
+                        <i class="fa-solid fa-trash"></i> Reset All Data
+                    </button>
+                    <button class="menu_button" id="tut-export-data" style="padding: 6px 12px;">
+                        <i class="fa-solid fa-download"></i> Export Data
+                    </button>
+                    <button class="menu_button" id="tut-import-data" style="padding: 6px 12px;">
+                        <i class="fa-solid fa-upload"></i> Import Data
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const popup = new Popup(popupContent, POPUP_TYPE.TEXT, '', {
+        okButton: 'Save',
+        cancelButton: 'Cancel',
+        wide: false,
+        allowVerticalScrolling: true,
+        onOpen: () => {
+            // Attach event handlers
+            $('#tut-reset-all').on('click', () => {
+                if (confirm('Are you sure you want to reset ALL token usage data? This cannot be undone.')) {
+                    resetAllUsage();
+                    // @ts-ignore
+                    toastr.success('All data reset');
+                }
+            });
+
+            $('#tut-export-data').on('click', () => {
+                exportUsageData();
+            });
+
+            $('#tut-import-data').on('click', () => {
+                importUsageData();
+            });
+
+            // Model pricing handlers
+            $('#tut-model-pricing').on('input', '.model-price-in, .model-price-out', function() {
+                const modelId = $(this).data('model');
+                const priceIn = $(`#tut-model-pricing .model-price-in[data-model="${modelId}"]`).val();
+                const priceOut = $(`#tut-model-pricing .model-price-out[data-model="${modelId}"]`).val();
+                setModelPrice(modelId, String(priceIn ?? ''), String(priceOut ?? ''));
+            });
+        }
+    });
+
+    const result = await popup.show();
+
+    if (result) {
+        // Save settings
+        settings.compactMode = $('#tut-compact-mode').is(':checked');
+        settings.showCostEstimates = $('#tut-show-costs').is(':checked');
+        settings.defaultChartRange = parseInt(String($('#tut-default-range').val())) || 30;
+        settings.chartHeight = parseInt(String($('#tut-chart-height').val())) || 320;
+        settings.enableHourlyTracking = $('#tut-hourly-tracking').is(':checked');
+        settings.enableChatTracking = $('#tut-chat-tracking').is(':checked');
+        settings.warningThreshold = parseInt(String($('#tut-warning-threshold').val())) || 0;
+        settings.budgetLimit = parseFloat(String($('#tut-budget-limit').val())) || 0;
+
+        saveSettings();
+        updateUIStats();
+        // @ts-ignore
+        toastr.success('Settings saved');
+    }
+}
+
+/**
+ * Render the model pricing list for settings popup
+ */
+function renderModelPricingList() {
+    const stats = getUsageStats();
+    const models = Object.keys(stats.byModel || {}).sort();
+
+    if (models.length === 0) {
+        return '<div style="text-align: center; opacity: 0.5; padding: 16px;">No models tracked yet</div>';
+    }
+
+    let html = '<div style="display: flex; flex-direction: column; gap: 6px;">';
+    for (const model of models) {
+        const prices = getModelPrice(model);
+        const color = getModelColor(model);
+        const shortName = model.length > 25 ? model.substring(0, 22) + '...' : model;
+
+        html += `
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="color" value="${color}" data-model="${model}" class="model-color-input"
+                    style="width: 24px; height: 24px; padding: 0; border: none; cursor: pointer; border-radius: 4px;">
+                <span title="${model}" style="flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${shortName}</span>
+                <input type="number" class="model-price-in text_pole" data-model="${model}" value="${prices.in || ''}"
+                    step="0.01" min="0" placeholder="In $" style="width: 70px; padding: 4px; font-size: 11px;">
+                <input type="number" class="model-price-out text_pole" data-model="${model}" value="${prices.out || ''}"
+                    step="0.01" min="0" placeholder="Out $" style="width: 70px; padding: 4px; font-size: 11px;">
+            </div>
+        `;
+    }
+    html += '</div>';
+    return html;
+}
+
+/**
+ * Export usage data as JSON
+ */
+function exportUsageData() {
+    const settings = getSettings();
+    const exportData = {
+        exportDate: new Date().toISOString(),
+        usage: settings.usage,
+        modelPrices: settings.modelPrices,
+        modelColors: settings.modelColors
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `token-usage-export-${getDayKey()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    // @ts-ignore
+    toastr.success('Data exported');
+}
+
+/**
+ * Import usage data from JSON file
+ */
+function importUsageData() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+
+    input.onchange = async (e) => {
+        const file = /** @type {HTMLInputElement} */ (e.target).files?.[0];
+        if (!file) return;
+
+        try {
+            const text = await file.text();
+            const importData = JSON.parse(text);
+
+            // Validate the imported data structure
+            if (!importData.usage) {
+                // @ts-ignore
+                toastr.error('Invalid import file: missing usage data');
+                return;
+            }
+
+            const settings = getSettings();
+
+            // Ask user how to handle the import
+            const mergeChoice = confirm(
+                'How would you like to import the data?\n\n' +
+                'OK = Merge (add imported data to existing data)\n' +
+                'Cancel = Replace (overwrite existing data with imported data)'
+            );
+
+            if (mergeChoice) {
+                // Merge mode
+                mergeUsageData(settings.usage, importData.usage);
+            } else {
+                // Replace mode
+                settings.usage = importData.usage;
+            }
+
+            // Import model prices and colors
+            if (importData.modelPrices) {
+                for (const [modelId, prices] of Object.entries(importData.modelPrices)) {
+                    if (!settings.modelPrices[modelId]) {
+                        settings.modelPrices[modelId] = prices;
+                    }
+                }
+            }
+            if (importData.modelColors) {
+                for (const [modelId, color] of Object.entries(importData.modelColors)) {
+                    if (!settings.modelColors[modelId]) {
+                        settings.modelColors[modelId] = color;
+                    }
+                }
+            }
+
+            saveSettings();
+            eventSource.emit('tokenUsageUpdated', getUsageStats());
+
+            // @ts-ignore
+            toastr.success(`Data imported successfully (${mergeChoice ? 'merged' : 'replaced'})`);
+            console.log('[Token Usage Tracker] Data imported from:', file.name);
+        } catch (error) {
+            console.error('[Token Usage Tracker] Import error:', error);
+            // @ts-ignore
+            toastr.error('Failed to import data: ' + error.message);
+        }
+    };
+
+    input.click();
+}
+
+/**
+ * Merge imported usage data into existing usage data
+ * @param {Object} existing - Existing usage data
+ * @param {Object} imported - Imported usage data
+ */
+function mergeUsageData(existing, imported) {
+    // Merge allTime
+    if (imported.allTime) {
+        existing.allTime.input += imported.allTime.input || 0;
+        existing.allTime.output += imported.allTime.output || 0;
+        existing.allTime.total += imported.allTime.total || 0;
+        existing.allTime.messageCount += imported.allTime.messageCount || 0;
+    }
+
+    // Merge time-based buckets
+    const mergeBucket = (existingBucket, importedBucket) => {
+        for (const [key, data] of Object.entries(importedBucket || {})) {
+            if (!existingBucket[key]) {
+                existingBucket[key] = { input: 0, output: 0, total: 0, messageCount: 0 };
+            }
+            existingBucket[key].input += data.input || 0;
+            existingBucket[key].output += data.output || 0;
+            existingBucket[key].total += data.total || 0;
+            existingBucket[key].messageCount += data.messageCount || 0;
+
+            // Merge models within day data
+            if (data.models && existingBucket[key]) {
+                if (!existingBucket[key].models) existingBucket[key].models = {};
+                for (const [modelId, mData] of Object.entries(data.models)) {
+                    if (!existingBucket[key].models[modelId]) {
+                        existingBucket[key].models[modelId] = { input: 0, output: 0, total: 0 };
+                    }
+                    const existing = existingBucket[key].models[modelId];
+                    if (typeof mData === 'number') {
+                        existing.total += mData;
+                    } else {
+                        existing.input += mData.input || 0;
+                        existing.output += mData.output || 0;
+                        existing.total += mData.total || 0;
+                    }
+                }
+            }
+        }
+    };
+
+    mergeBucket(existing.byDay, imported.byDay);
+    mergeBucket(existing.byHour, imported.byHour);
+    mergeBucket(existing.byWeek, imported.byWeek);
+    mergeBucket(existing.byMonth, imported.byMonth);
+    mergeBucket(existing.byChat, imported.byChat);
+
+    // Merge byModel
+    for (const [modelId, data] of Object.entries(imported.byModel || {})) {
+        if (!existing.byModel[modelId]) {
+            existing.byModel[modelId] = { input: 0, output: 0, total: 0, messageCount: 0 };
+        }
+        existing.byModel[modelId].input += data.input || 0;
+        existing.byModel[modelId].output += data.output || 0;
+        existing.byModel[modelId].total += data.total || 0;
+        existing.byModel[modelId].messageCount += data.messageCount || 0;
+    }
+}
+
+/**
+ * Check budget/threshold warnings
+ */
+function checkWarnings() {
+    const settings = getSettings();
+    const stats = getUsageStats();
+
+    // Daily token warning
+    if (settings.warningThreshold > 0 && stats.today.total >= settings.warningThreshold) {
+        // @ts-ignore
+        toastr.warning(`Daily token usage (${formatTokens(stats.today.total)}) has reached the warning threshold!`, 'Token Usage Warning');
+    }
+
+    // Monthly budget warning
+    if (settings.budgetLimit > 0) {
+        const now = new Date();
+        const currentMonthKey = getMonthKey(now);
+        let monthCost = 0;
+
+        for (const [dayKey, data] of Object.entries(settings.usage.byDay)) {
+            const [year, month, day] = dayKey.split('-').map(Number);
+            const date = new Date(year, month - 1, day);
+
+            if (getMonthKey(date) === currentMonthKey && data.models) {
+                for (const [mid, mData] of Object.entries(data.models)) {
+                    const mInput = typeof mData === 'number' ? 0 : (mData.input || 0);
+                    const mOutput = typeof mData === 'number' ? 0 : (mData.output || 0);
+                    monthCost += calculateCost(mInput, mOutput, mid);
+                }
+            }
+        }
+
+        if (monthCost >= settings.budgetLimit) {
+            // @ts-ignore
+            toastr.error(`Monthly budget limit ($${settings.budgetLimit.toFixed(2)}) has been reached! Current: $${monthCost.toFixed(2)}`, 'Budget Alert');
+        } else if (monthCost >= settings.budgetLimit * 0.8) {
+            // @ts-ignore
+            toastr.warning(`Approaching monthly budget limit (80%). Current: $${monthCost.toFixed(2)} / $${settings.budgetLimit.toFixed(2)}`, 'Budget Warning');
+        }
+    }
+}
+
 // Chart state
 let currentChartRange = 30;
 let chartData = [];
