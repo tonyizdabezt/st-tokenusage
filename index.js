@@ -2908,6 +2908,7 @@ function patchConnectionManager() {
     const checkInterval = setInterval(() => {
         try {
             const context = getContext();
+            /** @type {any} */
             const ServiceClass = context?.ConnectionManagerRequestService;
 
             if (!ServiceClass || typeof ServiceClass.sendRequest !== 'function') return;
@@ -2935,6 +2936,7 @@ function patchConnectionManager() {
                         console.error('[Token Usage Tracker] Error counting sendRequest input:', e);
                     }
 
+                    /** @type {any} */
                     const result = await originalSendRequest(profileId, messages, maxTokens, custom, overridePayload);
 
                     try {
