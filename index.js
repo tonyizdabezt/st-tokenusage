@@ -739,18 +739,45 @@ function registerSlashCommands() {
 
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'tokenreset',
-        callback: async (args) => {
-            const scope = String(args || '').trim() || 'session';
-            if (scope === 'all') {
+        callback: async () => {
+            if (confirm('Are you sure you want to reset all token usage data?')) {
                 resetAllUsage();
                 return 'All token usage data has been reset.';
-            } else {
-                resetSession();
-                return 'Session token usage has been reset.';
             }
+            return 'Reset cancelled.';
         },
         returns: 'Confirmation message',
-        helpString: 'Resets token usage. Use /tokenreset for session only, or /tokenreset all for all data.',
+        helpString: 'Resets all token usage data.',
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'tokenstats',
+        callback: async () => {
+            await showDetailedStatsPopup();
+            return '';
+        },
+        returns: 'Opens detailed stats popup',
+        helpString: 'Opens a detailed popup with token usage statistics, charts, and model breakdown.',
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'tokensettings',
+        callback: async () => {
+            await showSettingsPopup();
+            return '';
+        },
+        returns: 'Opens settings popup',
+        helpString: 'Opens the Token Usage Tracker settings popup.',
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'tokenexport',
+        callback: async () => {
+            exportUsageData();
+            return 'Token usage data exported.';
+        },
+        returns: 'Confirmation message',
+        helpString: 'Exports all token usage data as a JSON file.',
     }));
 }
 
