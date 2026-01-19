@@ -3041,7 +3041,7 @@ jQuery(async () => {
         console.log('[Token Usage Tracker] Tokenizer will be determined when API is connected');
     }
 
-    console.log('[Token Usage Tracker] Use /tokenusage to see stats, /tokenreset to reset session');
+    console.log('[Token Usage Tracker] Use /tokenusage to see stats, /tokenreset to reset all data');
 
     // Emit initial stats for any listening UI
     setTimeout(() => {
