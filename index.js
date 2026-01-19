@@ -2670,77 +2670,8 @@ function updateUIStats() {
     // Update chart data
     chartData = getChartData(currentChartRange);
     renderChart();
-
-    // Update model colors grid
-    renderModelColorsGrid();
 }
 
-
-/**
- * Render the model colors grid with price inputs
- */
-function renderModelColorsGrid() {
-    const grid = $('#token-usage-model-colors-grid');
-    if (grid.length === 0) return;
-
-    const stats = getUsageStats();
-    const models = Object.keys(stats.byModel || {}).sort();
-
-    if (models.length === 0) {
-        grid.empty().append('<div style="font-size: 10px; color: var(--SmartThemeBodyColor); opacity: 0.5; padding: 8px; text-align: center;">No models tracked yet</div>');
-        return;
-    }
-
-    // If grid is already populated with the same models, don't wipe it (prevents input focus loss)
-    const existingRows = grid.children('.model-config-row');
-    if (existingRows.length === models.length) {
-        // Assume same order check isn't needed for now, unlikely to change order rapidly
-        return;
-    }
-
-    grid.empty();
-
-    for (const model of models) {
-        const color = getModelColor(model);
-        const prices = getModelPrice(model);
-
-        const row = $(`
-            <div class="model-config-row" style="display: flex; align-items: center; gap: 4px; min-width: 0;">
-                <input type="color" value="${color}" data-model="${model}"
-                       class="model-color-picker"
-                       style="width: 20px; height: 20px; padding: 0; border: none; cursor: pointer; flex-shrink: 0; border-radius: 4px;">
-                <span title="${model}" style="font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--SmartThemeBodyColor); flex: 1;">${model}</span>
-                <span style="font-size: 8px; color: var(--SmartThemeBodyColor); opacity: 0.5; flex-shrink: 0;">Price</span>
-                <input type="number" class="price-input-in" data-model="${model}" value="${prices.in || ''}" step="0.01" min="0" placeholder="In" title="Price per 1M input tokens" style="width: 28px; padding: 1px 2px; font-size: 8px; border-radius: 2px; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeInputColor); color: var(--SmartThemeBodyColor); flex-shrink: 0;">
-                <input type="number" class="price-input-out" data-model="${model}" value="${prices.out || ''}" step="0.01" min="0" placeholder="Out" title="Price per 1M output tokens" style="width: 28px; padding: 1px 2px; font-size: 8px; border-radius: 2px; border: 1px solid var(--SmartThemeBorderColor); background: var(--SmartThemeInputColor); color: var(--SmartThemeBodyColor); flex-shrink: 0;">
-            </div>
-        `);
-
-        // Color picker handler
-        row.find('.model-color-picker').on('change', function() {
-            setModelColor(String($(this).data('model')), String($(this).val()));
-            renderChart();
-        });
-
-        // Price input handlers with debounce
-        let debounceTimer;
-        const handlePriceChange = () => {
-             const mId = model; // closure
-             const pIn = row.find('.price-input-in').val();
-             const pOut = row.find('.price-input-out').val();
-             setModelPrice(mId, pIn, pOut);
-             // Trigger UI update to recalc costs
-             updateUIStats();
-        };
-
-        row.find('input[type="number"]').on('input', function() {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(handlePriceChange, 500);
-        });
-
-        grid.append(row);
-    }
-}
 
 /**
  * Create the settings UI in the extensions panel
@@ -2814,23 +2745,18 @@ function createSettingsUI() {
                         </div>
                     </div>
 
-                    <!-- Config (Model Colors & Prices) -->
-                    <div class="inline-drawer" style="margin-top: 10px;">
-                        <div class="inline-drawer-toggle inline-drawer-header" style="padding: 4px 0 4px 8px;">
-                            <span style="font-size: 11px;">Config</span>
-                            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-                        </div>
-                        <div class="inline-drawer-content">
-                            <div id="token-usage-model-colors-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;"></div>
-                        </div>
-                    </div>
-
                     <!-- Controls -->
-                    <div style="display: flex; align-items: center; gap: 8px; padding-left: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px; padding-left: 8px; margin-top: 8px;">
                         <div style="font-size: 9px; color: var(--SmartThemeBodyColor); opacity: 0.4;" id="token-usage-tokenizer">Tokenizer: ${stats.tokenizer || 'Unknown'}</div>
                         <div style="flex: 1;"></div>
+                        <div id="token-usage-detailed-stats" class="menu_button" title="View detailed statistics" style="color: var(--SmartThemeBodyColor); opacity: 0.8; font-size: 11px; white-space: nowrap;">
+                            <i class="fa-solid fa-chart-pie"></i>&nbsp;Details
+                        </div>
+                        <div id="token-usage-settings" class="menu_button" title="Settings" style="color: var(--SmartThemeBodyColor); opacity: 0.8; font-size: 11px; white-space: nowrap;">
+                            <i class="fa-solid fa-gear"></i>&nbsp;Settings
+                        </div>
                         <div id="token-usage-reset-all" class="menu_button" title="Reset all stats" style="color: var(--SmartThemeBodyColor); opacity: 0.8; font-size: 11px; white-space: nowrap;">
-                            <i class="fa-solid fa-trash"></i>&nbsp;Reset All
+                            <i class="fa-solid fa-trash"></i>&nbsp;Reset
                         </div>
                     </div>
                 </div>
@@ -2875,8 +2801,19 @@ function createSettingsUI() {
         if (confirm('Are you sure you want to reset ALL token usage data? This cannot be undone.')) {
             resetAllUsage();
             updateUIStats();
+            // @ts-ignore - toastr is a global variable
             toastr.success('All stats reset');
         }
+    });
+
+    // Detailed stats popup handler
+    $('#token-usage-detailed-stats').on('click', function() {
+        showDetailedStatsPopup();
+    });
+
+    // Settings popup handler
+    $('#token-usage-settings').on('click', function() {
+        showSettingsPopup();
     });
 
     // Subscribe to updates
