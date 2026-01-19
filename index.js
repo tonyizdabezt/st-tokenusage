@@ -917,14 +917,14 @@ function getModelPrice(modelId) {
 /**
  * Set price settings for a model
  * @param {string} modelId
- * @param {number} priceIn - Price per 1M input tokens
- * @param {number} priceOut - Price per 1M output tokens
+ * @param {string|number} priceIn - Price per 1M input tokens
+ * @param {string|number} priceOut - Price per 1M output tokens
  */
 function setModelPrice(modelId, priceIn, priceOut) {
     const settings = getSettings();
     settings.modelPrices[modelId] = {
-        in: parseFloat(priceIn) || 0,
-        out: parseFloat(priceOut) || 0
+        in: parseFloat(String(priceIn)) || 0,
+        out: parseFloat(String(priceOut)) || 0
     };
     saveSettings();
 }
