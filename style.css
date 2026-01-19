@@ -30,3 +30,107 @@
 .model-config-row {
   padding: 2px 0;
 }
+
+/* Popup chart tab styles */
+.popup-chart-tab {
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.popup-chart-tab.active {
+  background-color: var(--SmartThemeQuoteColor) !important;
+  color: var(--SmartThemeBodyColor) !important;
+}
+
+.popup-chart-tab:hover:not(.active) {
+  opacity: 0.8;
+}
+
+/* Model breakdown table styles */
+#token_usage_tracker_container table {
+  font-size: 12px;
+}
+
+#token_usage_tracker_container table th,
+#token_usage_tracker_container table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+#token_usage_tracker_container table tr:last-child td {
+  border-bottom: none;
+}
+
+#token_usage_tracker_container table tr:hover {
+  background-color: var(--SmartThemeBlurTintColor);
+}
+
+/* Settings popup styles */
+#tut-model-pricing .model-price-in,
+#tut-model-pricing .model-price-out {
+  transition: border-color 0.15s;
+}
+
+#tut-model-pricing .model-price-in:focus,
+#tut-model-pricing .model-price-out:focus {
+  border-color: var(--SmartThemeQuoteColor);
+  outline: none;
+}
+
+.token-usage-stat-card {
+  transition: transform 0.15s, box-shadow 0.15s;
+  cursor: default;
+}
+
+.token-usage-stat-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+#token-usage-detailed-stats:hover,
+#token-usage-settings:hover,
+#token-usage-reset-all:hover {
+  opacity: 1 !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 600px) {
+  .token-usage-stats-grid {
+    grid-template-columns: 1fr !important;
+  }
+  
+  #token-usage-model-colors-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Animation for chart bars */
+#token-usage-chart rect,
+#token-usage-chart path {
+  transition: opacity 0.15s;
+}
+
+/* Donut chart legend scroll */
+.popup-chart-legend {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+/* Better scrollbar for popup content */
+.popup-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.popup-content::-webkit-scrollbar-track {
+  background: var(--SmartThemeBlurTintColor);
+  border-radius: 4px;
+}
+
+.popup-content::-webkit-scrollbar-thumb {
+  background: var(--SmartThemeBorderColor);
+  border-radius: 4px;
+}
+
+.popup-content::-webkit-scrollbar-thumb:hover {
+  background: var(--SmartThemeBodyColor);
+  opacity: 0.5;
+}
