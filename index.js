@@ -1864,6 +1864,8 @@ function renderCostChart(container, data) {
 async function showSettingsPopup() {
     const settings = getSettings();
 
+    let capturedValues = null;
+
     const popupContent = `
         <div style="min-width: 450px;">
             <h3 style="margin: 0 0 16px 0; display: flex; align-items: center; gap: 8px;">
@@ -1981,21 +1983,36 @@ async function showSettingsPopup() {
                 const priceOut = $(`#tut-model-pricing .model-price-out[data-model="${modelId}"]`).val();
                 setModelPrice(modelId, String(priceIn ?? ''), String(priceOut ?? ''));
             });
+        },
+        onClosing: (popup) => {
+            if (popup.result >= 1) { // POPUP_RESULT.AFFIRMATIVE = 1
+                capturedValues = {
+                    compactMode: $('#tut-compact-mode').is(':checked'),
+                    showCostEstimates: $('#tut-show-costs').is(':checked'),
+                    defaultChartRange: parseInt(String($('#tut-default-range').val())) || 30,
+                    chartHeight: parseInt(String($('#tut-chart-height').val())) || 320,
+                    enableHourlyTracking: $('#tut-hourly-tracking').is(':checked'),
+                    enableChatTracking: $('#tut-chat-tracking').is(':checked'),
+                    warningThreshold: parseInt(String($('#tut-warning-threshold').val())) || 0,
+                    budgetLimit: parseFloat(String($('#tut-budget-limit').val())) || 0,
+                };
+            }
+            return true; // Allow closing
         }
     });
 
     const result = await popup.show();
 
-    if (result) {
-        // Save settings
-        settings.compactMode = $('#tut-compact-mode').is(':checked');
-        settings.showCostEstimates = $('#tut-show-costs').is(':checked');
-        settings.defaultChartRange = parseInt(String($('#tut-default-range').val())) || 30;
-        settings.chartHeight = parseInt(String($('#tut-chart-height').val())) || 320;
-        settings.enableHourlyTracking = $('#tut-hourly-tracking').is(':checked');
-        settings.enableChatTracking = $('#tut-chat-tracking').is(':checked');
-        settings.warningThreshold = parseInt(String($('#tut-warning-threshold').val())) || 0;
-        settings.budgetLimit = parseFloat(String($('#tut-budget-limit').val())) || 0;
+    if (result && capturedValues) {
+        // Apply captured values to settings
+        settings.compactMode = capturedValues.compactMode;
+        settings.showCostEstimates = capturedValues.showCostEstimates;
+        settings.defaultChartRange = capturedValues.defaultChartRange;
+        settings.chartHeight = capturedValues.chartHeight;
+        settings.enableHourlyTracking = capturedValues.enableHourlyTracking;
+        settings.enableChatTracking = capturedValues.enableChatTracking;
+        settings.warningThreshold = capturedValues.warningThreshold;
+        settings.budgetLimit = capturedValues.budgetLimit;
 
         saveSettings();
         updateUIStats();
