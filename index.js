@@ -51,7 +51,6 @@ function loadSettings() {
     const settings = extension_settings[extensionName];
     if (!settings.modelColors) settings.modelColors = {};
     if (!settings.usage) settings.usage = structuredClone(defaultSettings.usage);
-    if (!settings.usage.session) settings.usage.session = structuredClone(defaultSettings.usage.session);
     if (!settings.usage.allTime) settings.usage.allTime = structuredClone(defaultSettings.usage.allTime);
     if (!settings.usage.byDay) settings.usage.byDay = {};
     if (!settings.usage.byHour) settings.usage.byHour = {};
@@ -80,11 +79,6 @@ function loadSettings() {
                 }
             }
         }
-    }
-
-    // Initialize session start time
-    if (!settings.usage.session.startTime) {
-        settings.usage.session.startTime = new Date().toISOString();
     }
 
     return settings;
@@ -221,9 +215,6 @@ function recordUsage(inputTokens, outputTokens, chatId = null, modelId = null) {
         bucket.messageCount = (bucket.messageCount || 0) + 1;
     };
 
-    // Session
-    addTokens(usage.session);
-
     // All-time
     addTokens(usage.allTime);
 
@@ -276,24 +267,10 @@ function recordUsage(inputTokens, outputTokens, chatId = null, modelId = null) {
     // Emit custom event for UI updates
     eventSource.emit('tokenUsageUpdated', getUsageStats());
 
-    console.log(`[Token Usage Tracker] Recorded: +${inputTokens} input, +${outputTokens} output, model: ${modelId || 'unknown'} (using ${getFriendlyTokenizerName(main_api).tokenizerName})`);
-}
+    // Check for warnings/alerts
+    checkWarnings();
 
-/**
- * Reset session usage
- */
-function resetSession() {
-    const settings = getSettings();
-    settings.usage.session = {
-        input: 0,
-        output: 0,
-        total: 0,
-        messageCount: 0,
-        startTime: new Date().toISOString(),
-    };
-    saveSettings();
-    eventSource.emit('tokenUsageUpdated', getUsageStats());
-    console.log('[Token Usage Tracker] Session reset');
+    console.log(`[Token Usage Tracker] Recorded: +${inputTokens} input, +${outputTokens} output, model: ${modelId || 'unknown'} (using ${getFriendlyTokenizerName(main_api).tokenizerName})`);
 }
 
 /**
@@ -302,7 +279,6 @@ function resetSession() {
 function resetAllUsage() {
     const settings = getSettings();
     settings.usage = structuredClone(defaultSettings.usage);
-    settings.usage.session.startTime = new Date().toISOString();
     saveSettings();
     eventSource.emit('tokenUsageUpdated', getUsageStats());
     console.log('[Token Usage Tracker] All usage data reset');
@@ -326,7 +302,6 @@ function getUsageStats() {
     }
 
     return {
-        session: { ...usage.session },
         allTime: { ...usage.allTime },
         today: usage.byDay[getDayKey(now)] || { input: 0, output: 0, total: 0, messageCount: 0, models: {} },
         thisHour: usage.byHour[getHourKey(now)] || { input: 0, output: 0, total: 0, messageCount: 0 },
@@ -733,7 +708,6 @@ function registerSlashCommands() {
             const stats = getUsageStats();
             const output = [
                 `Tokenizer: ${stats.tokenizer}`,
-                `Session: ${stats.session.total} tokens (${stats.session.input} in, ${stats.session.output} out)`,
                 `Today: ${stats.today.total} tokens`,
                 `This Week: ${stats.thisWeek.total} tokens`,
                 `This Month: ${stats.thisMonth.total} tokens`,
@@ -769,7 +743,6 @@ window['TokenUsageTracker'] = {
     getStats: getUsageStats,
     getUsageForRange,
     getChatUsage,
-    resetSession,
     resetAllUsage,
     recordUsage,
     countTokens, // Expose the token counting function
