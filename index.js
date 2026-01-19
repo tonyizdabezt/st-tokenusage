@@ -15,17 +15,25 @@ import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { getChatCompletionModel, oai_settings } from '../../../openai.js';
 import { textgenerationwebui_settings as textgen_settings } from '../../../textgen-settings.js';
+import { POPUP_TYPE, Popup } from '../../../popup.js';
 
-const extensionName = 'token-usage-tracker';
+const extensionName = 'st-tokenusage';
 
 const defaultSettings = {
     showInTopBar: true,
+    compactMode: false,
+    showCostEstimates: true,
+    defaultChartRange: 30,
+    chartHeight: 320,
+    enableHourlyTracking: true,
+    enableChatTracking: true,
+    warningThreshold: 0,
+    budgetLimit: 0,
     modelColors: {}, // { "gpt-4o": "#6366f1", "claude-3-opus": "#8b5cf6", ... }
     // Prices per 1M tokens: { "gpt-4o": { in: 2.5, out: 10 }, ... }
     modelPrices: {},
     // Accumulated usage data
     usage: {
-        session: { input: 0, output: 0, total: 0, messageCount: 0, startTime: null },
         allTime: { input: 0, output: 0, total: 0, messageCount: 0 },
         // Time-based buckets: { "2025-01-15": { input: X, output: Y, total: Z, models: { "gpt-4o": 500, ... } }, ... }
         byDay: {},
@@ -61,6 +69,16 @@ function loadSettings() {
 
     // Initialize modelPrices
     if (!settings.modelPrices) settings.modelPrices = {};
+
+    // Initialize settings with defaults
+    if (settings.compactMode === undefined) settings.compactMode = defaultSettings.compactMode;
+    if (settings.showCostEstimates === undefined) settings.showCostEstimates = defaultSettings.showCostEstimates;
+    if (settings.defaultChartRange === undefined) settings.defaultChartRange = defaultSettings.defaultChartRange;
+    if (settings.chartHeight === undefined) settings.chartHeight = defaultSettings.chartHeight;
+    if (settings.enableHourlyTracking === undefined) settings.enableHourlyTracking = defaultSettings.enableHourlyTracking;
+    if (settings.enableChatTracking === undefined) settings.enableChatTracking = defaultSettings.enableChatTracking;
+    if (settings.warningThreshold === undefined) settings.warningThreshold = defaultSettings.warningThreshold;
+    if (settings.budgetLimit === undefined) settings.budgetLimit = defaultSettings.budgetLimit;
 
     // Migration: Convert byDay.models from numeric format to object format
     // Old: models[modelId] = totalTokens (number)
